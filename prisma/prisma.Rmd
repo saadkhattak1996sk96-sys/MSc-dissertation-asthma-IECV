@@ -1,0 +1,67 @@
+---
+title: "PRISMA 2020 Flow Diagram"
+author: "Saad Ishaq Khattak"
+date: "Confirmed running locally in RStudio, 12 July 2026"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(eval = FALSE, echo = TRUE)
+```
+
+# Purpose
+
+Builds the PRISMA 2020 flow diagram for the systematic review
+underpinning this dissertation (18 studies identified, updating
+Bridge et al. 2020 to January 2017 onwards).
+
+**Status:** run locally in RStudio, not on Barkla — this script does
+not touch OPCRD data or require HPC resources. Confirmed working
+12 July 2026.
+
+```{r prisma-diagram}
+#=====================================================================
+# PRISMA 2020 FLOW DIAGRAM
+#=====================================================================
+
+library(PRISMA2020)
+
+csvFile <- system.file("extdata", "PRISMA.csv", package = "PRISMA2020")
+template <- read.csv(csvFile, stringsAsFactors = FALSE)
+template
+
+set_n <- function(df, row_name, value) {
+  df$n[df$data == row_name] <- value
+  df
+}
+
+template <- set_n(template, "database_results", 4428)
+template <- set_n(template, "register_results", 0)
+template <- set_n(template, "duplicates", 14)
+template <- set_n(template, "excluded_automatic", 0)
+template <- set_n(template, "excluded_other", 0)
+template <- set_n(template, "records_screened", 4414)
+template <- set_n(template, "records_excluded", 4367)
+template <- set_n(template, "dbr_sought_reports", 47)
+template <- set_n(template, "dbr_notretrieved_reports", 0)
+template <- set_n(template, "dbr_assessed", 47)
+template <- set_n(template, "new_studies", 18)
+template <- set_n(template, "new_reports", 18)
+template <- set_n(template, "total_studies", 18)
+template <- set_n(template, "total_reports", 18)
+
+template <- set_n(
+  template, "dbr_excluded",
+  "EC9 - asthma control/symptom outcome rather than discrete exacerbation, 12; EC14 - etiological study without a clinical prediction model, 14; EC16 - secondary literature (review/meta-analysis/editorial), 3"
+)
+template[template$data == "dbr_excluded", ]
+
+template <- set_n(template, "excluded_automatic", NA)
+
+data <- PRISMA_data(template)
+plot <- PRISMA_flowdiagram(data, previous = FALSE, other = FALSE, fontsize = 12)
+plot
+PRISMA_save(plot, filename = "PRISMA_diagram.png", filetype = "PNG", overwrite = TRUE)
+
+file.exists("PRISMA_diagram.png")
+```
