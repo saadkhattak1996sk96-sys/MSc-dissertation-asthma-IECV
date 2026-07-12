@@ -1,0 +1,263 @@
+---
+title: "Baseline Characteristics Table (Table 1) — Full Pipeline"
+author: "Saad Ishaq Khattak"
+date: "Confirmed running on Barkla HPC, 12 July 2026 (prep job 9762235, baseline table job 9762366)"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(eval = FALSE, echo = TRUE)
+```
+
+# Purpose
+
+This document is a combined record of the full pipeline behind Table 1:
+cohort construction (Steps 1-7) followed by the table itself (Steps 8-9).
+
+**On Barkla, these ran as two separate scripts, not one file:**
+`prep_cohort.R` (Steps 1-7) produces `year1.rds` and `pwp.rds`, saved to
+`/users/hlskhatt/outputs/`. `baseline_table.R` (Steps 8-9) loads those
+two files and does not rebuild the cohort itself. This split is
+deliberate — cohort-construction logic lives in exactly one place, so a
+fix only ever needs making once, and the Noble validation script reuses
+the same `year1.rds`/`pwp.rds` rather than duplicating Steps 1-7 again.
+
+This combined file is a documentation convenience, not a literal
+single-script transcript. `eval=FALSE` throughout — nothing in this
+document executes when rendered. No patient data or output files are
+included in this repository — code only.
+
+**Dependency notes:**
+- Steps 1-7 need `dplyr`, `data.table`, `moments`, `lubridate`, `ggplot2`.
+- Steps 8-9 need `dplyr`, `gtsummary`, and a working `pandoc`. Barkla has
+  no system-wide pandoc; a standalone binary was downloaded to
+  `~/pandoc_local/pandoc-3.1.11/bin/pandoc` and added to `PATH` rather
+  than installing `flextable`/`officer`/`ragg`, which failed to compile
+  due to missing `freetype`/`libtiff` system libraries on this cluster.
+
+**Status:** confirmed run successfully via SLURM batch jobs on Barkla —
+prep (job 9762235) and baseline table (job 9762366) — on 12 July 2026.
+
+---
+
+# Steps 1-7 — Cohort construction (`prep_cohort.R`)
+
+```{r prep-cohort}
+#=====================================================================
+# OPCRD External Validation — SHARED COHORT PREP
+#=====================================================================
+
+opcrd_path <- "/users/hlskhatt/data/OPCRD.csv"
+pwp_path   <- "/users/hlskhatt/data/PWP asthma - overall,definite.xls"
+output_dir <- "/users/hlskhatt/outputs"
+if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
+
+library(dplyr)
+library(data.table)
+library(moments)
+library(lubridate)
+library(ggplot2)
+
+#=========================
+# STEP 1: LOADING THE DATA
+#=========================
+opcrd <- as.data.frame(fread(opcrd_path))
+cat("Rows loaded:", nrow(opcrd), "\n")
+cat("Columns loaded:", ncol(opcrd), "\n")
+
+# ========================================================
+# STEP 2: COHORT DERIVATION — ACTIVE ASTHMA THERAPY FILTER
+# ========================================================
+defasthma <- subset(opcrd, !(ba_Drug_Treatment %in%
+                                c("SAAAC + SABA", "SAAC", "SABA")))
+cat("Unique patients after active-therapy filter:",
+    length(unique(defasthma$Patient_ID)), "\n")
+
+opcrda <- data.table(defasthma, key = "Patient_ID")
+year1  <- opcrda[J(unique(Patient_ID)), mult = "first"]
+cat("Final cohort size (year1):", nrow(year1), "\n")
+
+#=======================================================
+# STEP 3: RECODE MISSING VALUES FOR CONTINUOUS VARIABLES
+#=======================================================
+year1 <- year1 %>%
+  mutate(
+    BMI_clean = ifelse(BMI == -1, NA, BMI),
+    Eosinophil_clean = ifelse(ba_Eosinophil_Count == -1,
+                               NA, ba_Eosinophil_Count)
+  )
+cat("Missing BMI (after recode):", sum(is.na(year1$BMI_clean)), "\n")
+cat("Missing Eosinophil (after recode):", sum(is.na(year1$Eosinophil_clean)), "\n")
+
+#=========================================================
+# STEP 4: DISTRIBUTION ASSESSMENT FOR CONTINUOUS VARIABLES
+#=========================================================
+continuous_vars <- c("age", "BMI_clean")
+skewness_table <- data.frame(
+  variable = continuous_vars,
+  mean     = sapply(year1[, continuous_vars, with = FALSE], mean, na.rm = TRUE),
+  median   = sapply(year1[, continuous_vars, with = FALSE], median, na.rm = TRUE),
+  skewness = sapply(year1[, continuous_vars, with = FALSE], skewness, na.rm = TRUE)
+)
+print(skewness_table)
+write.csv(skewness_table, file.path(output_dir, "skewness_table.csv"), row.names = FALSE)
+
+age_hist <- ggplot(as.data.frame(year1), aes(x = age)) +
+  geom_histogram(bins = 30, fill = "#7570b3", colour = "black") +
+  theme_bw() + ggtitle("Distribution of age")
+ggsave(file.path(output_dir, "age_distribution.png"), age_hist, width = 6, height = 4)
+
+bmi_hist <- ggplot(as.data.frame(year1), aes(x = BMI_clean)) +
+  geom_histogram(bins = 30, fill = "#1b9e77", colour = "black") +
+  theme_bw() + ggtitle("Distribution of BMI")
+ggsave(file.path(output_dir, "bmi_distribution.png"), bmi_hist, width = 6, height = 4)
+
+#====================================
+# STEP 5: LABEL CATEGORICAL VARIABLES
+#====================================
+year1 <- year1 %>%
+  mutate(
+    Gender_clean = factor(Gender_Coded,
+                           levels = c(0, 1),
+                           labels = c("Female", "Male")),
+    Smoking_clean = ifelse(Smoking_Status == -1, NA, Smoking_Status),
+    Smoking_clean = factor(Smoking_clean,
+                            levels = c(1, 2, 3),
+                            labels = c("Non-smoker",
+                                       "Current smoker",
+                                       "Ex-smoker"))
+  )
+print(table(year1$Gender_clean, useNA = "always"))
+print(table(year1$Smoking_clean, useNA = "always"))
+
+#=================================================================
+# STEP 6: DERIVE PREVIOUS EXACERBATION VARIABLES AND YEAR OF ENTRY
+#=================================================================
+cat("Broad definition event count:",
+    sum(year1$ba_Asthma_Exacerbations > 0), "\n")
+cat("ATS-strict definition event count:",
+    sum(year1$ba_Asthma_Exac_ATS > 0), "\n")
+
+year1 <- year1 %>%
+  mutate(
+    prev_exac = factor(ifelse(ba_Asthma_Exacerbations > 0, "Yes", "No"),
+                        levels = c("No", "Yes")),
+    year_of_entry = factor(year(dmy(Start_Year_1)))
+  )
+cat("Missing year_of_entry (should be 0):", sum(is.na(year1$year_of_entry)), "\n")
+print(table(year1$prev_exac))
+print(table(year1$year_of_entry))
+
+#=====================================================================
+# STEP 7: LOAD PWP OUTCOME FILE AND DERIVE EXACERBATION STRATIFICATION
+#=====================================================================
+pwp <- read.delim(pwp_path, header = FALSE, sep = "\t",
+                   col.names = c("Patient_ID", "tstart", "tstop", "event", "eventnum"))
+cat("PWP rows:", nrow(pwp), "| columns:", ncol(pwp),
+    "| unique patients:", length(unique(pwp$Patient_ID)), "\n")
+
+exac_counts <- pwp %>%
+  group_by(Patient_ID) %>%
+  summarise(n_exac = sum(event == 1))
+
+year1 <- year1 %>%
+  left_join(exac_counts, by = "Patient_ID") %>%
+  mutate(
+    exac_group = case_when(
+      is.na(n_exac) ~ "Outcome unknown",
+      n_exac == 0   ~ "0",
+      n_exac == 1   ~ "1",
+      n_exac >= 2   ~ ">=2"
+    ),
+    exac_group = factor(exac_group,
+                         levels = c("0", "1", ">=2", "Outcome unknown"))
+  )
+print(table(year1$exac_group))
+cat("Total (should equal cohort size):", sum(table(year1$exac_group)), "\n")
+
+saveRDS(year1, file.path(output_dir, "year1.rds"))
+saveRDS(pwp,   file.path(output_dir, "pwp.rds"))
+
+cat("\n--- PREP COMPLETE ---\n")
+cat("Cohort size:", nrow(year1), "| PWP patients:", length(unique(pwp$Patient_ID)), "\n")
+```
+
+---
+
+# Steps 8-9 — Table build and export (`baseline_table.R`)
+
+```{r baseline-table}
+#=====================================================================
+# OPCRD External Validation — BASELINE CHARACTERISTICS TABLE (Table 1)
+#=====================================================================
+
+output_dir <- "/users/hlskhatt/outputs"
+
+library(dplyr)
+library(gtsummary)
+
+year1 <- readRDS(file.path(output_dir, "year1.rds"))
+cat("Loaded cohort size:", nrow(year1), "\n")
+
+#======================================================
+# STEP 8: BUILDING FINAL BASELINE CHARACTERISTICS TABLE
+#======================================================
+vars_to_summarise <- c("Gender_clean", "prev_exac", "Smoking_clean",
+                        "year_of_entry", "age", "BMI_clean")
+
+var_labels <- list(
+  Gender_clean  ~ "Gender",
+  prev_exac     ~ "Previous exacerbation (broad definition)",
+  Smoking_clean ~ "Smoking status",
+  year_of_entry ~ "Year of entry into study",
+  age           ~ "Age (years)",
+  BMI_clean     ~ "BMI"
+)
+
+overall_tbl <- as.data.frame(year1) %>%
+  select(all_of(vars_to_summarise)) %>%
+  tbl_summary(
+    statistic = list(
+      age       ~ "{mean} ({sd})",
+      BMI_clean ~ "{median} ({p25}, {p75})",
+      all_categorical() ~ "{n} ({p}%)"
+    ),
+    label        = var_labels,
+    missing_text = "Unknown",
+    type         = list(prev_exac ~ "categorical")
+  )
+
+strat_tbl <- as.data.frame(year1) %>%
+  select(all_of(vars_to_summarise), exac_group) %>%
+  tbl_summary(
+    by      = exac_group,
+    percent = "row",
+    statistic = list(
+      age       ~ "{mean} ({sd})",
+      BMI_clean ~ "{median} ({p25}, {p75})",
+      all_categorical() ~ "{n} ({p}%)"
+    ),
+    label        = var_labels,
+    missing_text = "Unknown",
+    type         = list(prev_exac ~ "categorical")
+  )
+
+table1_final <- tbl_merge(
+  tbls        = list(overall_tbl, strat_tbl),
+  tab_spanner = c("**Overall**",
+                  "**Number of exacerbations, full study period (baseline + outcome years, days 0-1095)**")
+) %>%
+  bold_labels()
+
+print(table1_final)
+
+#======================================
+# STEP 9: EXPORT TABLE TO WORD DOCUMENT
+#======================================
+table1_final %>%
+  as_gt() %>%
+  gt::gtsave(filename = file.path(output_dir, "Table1.docx"))
+
+cat("\n--- BASELINE TABLE COMPLETE ---\n")
+cat("Saved:", file.path(output_dir, "Table1.docx"), "\n")
+```
