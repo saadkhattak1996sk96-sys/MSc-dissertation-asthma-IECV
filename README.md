@@ -22,7 +22,7 @@ sharing agreement. Data files are excluded via `.gitignore` and must never be
 committed. Anyone running this code needs their own approved OPCRD access —
 this repo does not provide or imply access to any dataset.
 
-The one exception is `04_prisma/PRISMA_diagram.png` — a diagram of published
+The one exception is `01 prisma/PRISMA_diagram.png` — a diagram of published
 literature screening counts from the systematic review, not derived from
 OPCRD or any patient-level data, so it is not subject to the restriction above.
 
