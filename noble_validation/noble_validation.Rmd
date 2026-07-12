@@ -1,0 +1,338 @@
+---
+title: "External Validation of Noble et al. (2021)"
+author: "Saad Ishaq Khattak"
+date: "Confirmed running on Barkla HPC, 12 July 2026 (jobs 9763679, 9763685)"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(eval = FALSE, echo = TRUE)
+```
+
+# Purpose
+
+External validation of the Noble et al. (2021) asthma exacerbation
+prediction model in OPCRD. Loads `year1.rds` and `pwp.rds`, produced by
+the shared prep script (`prep_cohort.R`) — this script does not rebuild
+the cohort itself.
+
+**Why Noble was chosen:** of the 18 models identified by the systematic
+review, Noble was the strongest candidate for external validation — a
+fully published equation with intercept, a UK primary care population
+matching OPCRD's eligibility criteria, and 13 of 14 predictors directly
+available.
+
+**Why this validation is a worked example, not the dissertation's
+primary contribution:** attempting it surfaced structural limitations
+that no amount of careful coding can resolve — Noble's true outcome
+(hospitalisation/A&E/death) does not exist in OPCRD and was substituted
+using the PWP recurrent-event file; anaphylaxis history does not exist
+in OPCRD at all and was set to zero for every patient; GINA management
+step required inference via a differently-named treatment-intensity
+variable. None of these are coding errors — they are properties of the
+dataset, and they demonstrate empirically why classical external
+validation of this literature is insufficient, motivating the
+dissertation's actual centerpiece (IECV with Debray pooling).
+
+**Key result:** the worked example check (reproducing Noble's own
+published example patient, expected LP = -4.591) matched exactly,
+confirming the 22-coefficient equation was transcribed correctly.
+C-statistic 0.728 (0.723-0.733) closely matches Noble's own reported
+0.71, but calibration is poor (O/E ratio 7.933) — the model
+substantially under-predicts risk on this substitute outcome, the
+expected signature of applying a model calibrated for a rare, severe
+outcome onto a broader, more common one.
+
+**Status:** confirmed run successfully via SLURM batch job on Barkla
+(job 9763685, following an identical direct-run confirmation) on
+12 July 2026. No patient data or output files are included in this
+repository — code only. Outputs (comparison table, decile summary,
+summary statistics) are saved on Barkla and the author's own machine,
+not in this repository, per the data governance note in the main
+README.
+
+```{r noble-validation}
+#=====================================================================
+# OPCRD External Validation — NOBLE (2021) EXTERNAL VALIDATION
+#=====================================================================
+
+output_dir <- "/users/hlskhatt/outputs"
+
+library(dplyr)
+library(pROC)
+library(pmvalsampsize)
+
+year1 <- readRDS(file.path(output_dir, "year1.rds"))
+pwp   <- readRDS(file.path(output_dir, "pwp.rds"))
+cat("Loaded cohort size:", nrow(year1), "\n")
+cat("Loaded PWP rows:", nrow(pwp), "\n")
+
+#=============================================
+# MISSINGNESS CHECK — DIRECT BINARY PREDICTORS
+#=============================================
+vars_to_check <- c("Rhinitis_Dx_drugs", "Diabetes_Dx", "IHD_Dx",
+                    "Anxiety_depression_Dx", "Paracetamol",
+                    "ba_Acute_OS_Courses", "ba_Antibiotics", "ba_Asthma_InP")
+
+for (v in vars_to_check) {
+  cat("\n---", v, "---\n")
+  print(table(year1[[v]], useNA = "always"))
+}
+
+neg1_flags <- sapply(vars_to_check, function(v) any(year1[[v]] == -1, na.rm = TRUE))
+neg1_counts <- sapply(vars_to_check, function(v) sum(year1[[v]] == -1, na.rm = TRUE))
+cat("\nVariables containing -1:\n")
+print(neg1_flags)
+cat("\nCount of -1 values per variable:\n")
+print(neg1_counts)
+
+#=========================================================
+# STEP 10: MAP AND CONSTRUCT NOBLE (2021) MODEL PREDICTORS
+#=========================================================
+year1 <- year1 %>%
+  mutate(
+    age_61_80 = ifelse(age >= 61, 1, 0),
+    BMI_underweight = ifelse(BMI_clean < 18.5, 1, 0),
+    BMI_overweight  = ifelse(BMI_clean >= 25 & BMI_clean < 30, 1, 0),
+    BMI_obese       = ifelse(BMI_clean >= 30, 1, 0),
+    smoker_current = ifelse(Smoking_clean == "Current smoker", 1, 0),
+    smoker_ex      = ifelse(Smoking_clean == "Ex-smoker", 1, 0),
+    eos_over400 = ifelse(Eosinophil_clean > 0.4, 1, 0),
+    rhinitis     = Rhinitis_Dx_drugs,
+    diabetes     = Diabetes_Dx,
+    ihd          = IHD_Dx,
+    anx_dep      = Anxiety_depression_Dx,
+    paracetamol  = Paracetamol,
+    anaphylaxis = 0,
+    step_therapy_clean = ifelse(ba_step_therapy == -1, NA, ba_step_therapy),
+    gina_notherapy = ifelse(step_therapy_clean == 0, 1, 0),
+    gina_step3     = ifelse(step_therapy_clean == 3, 1, 0),
+    gina_step4_5   = ifelse(step_therapy_clean %in% c(4, 5), 1, 0),
+    lrti_1  = ifelse(ba_Antibiotics == 1, 1, 0),
+    lrti_2p = ifelse(ba_Antibiotics >= 2, 1, 0),
+    ocs_1  = ifelse(ba_Acute_OS_Courses == 1, 1, 0),
+    ocs_2  = ifelse(ba_Acute_OS_Courses == 2, 1, 0),
+    ocs_3p = ifelse(ba_Acute_OS_Courses >= 3, 1, 0),
+    prior_hosp = ifelse(ba_Asthma_InP >= 1, 1, 0)
+  )
+cat("Row count after Step 10:", nrow(year1), "\n")
+
+#=============================================================
+# STEP 11: CONSTRUCTING NOBLE OUTCOME SUBSTITUTE FROM PWP FILE
+#=============================================================
+pwp_365_v2 <- pwp %>%
+  filter(tstart >= 365 & tstop <= 730 & event == 1)
+
+noble_outcome_flag_v2 <- pwp_365_v2 %>%
+  group_by(Patient_ID) %>%
+  summarise(noble_event_365_v2 = 1) %>%
+  ungroup()
+
+year1 <- year1 %>%
+  left_join(noble_outcome_flag_v2, by = "Patient_ID") %>%
+  mutate(
+    noble_outcome_v2 = case_when(
+      !is.na(noble_event_365_v2)             ~ 1,
+      Patient_ID %in% unique(pwp$Patient_ID)  ~ 0,
+      TRUE                                    ~ NA_real_
+    )
+  )
+
+print(table(year1$noble_outcome_v2, useNA = "always"))
+cat("Row count check:", nrow(year1) == 155163, "\n")
+cat("N with known outcome:", sum(!is.na(year1$noble_outcome_v2)), "\n")
+
+#===========================================================
+# STEP 12: CALCULATING OUTCOME PREVALENCE ON THE FULL COHORT
+#===========================================================
+noble_prevalence <- mean(year1$noble_outcome_v2, na.rm = TRUE)
+cat("\nNoble-substitute outcome prevalence:", noble_prevalence, "\n")
+
+#=================================================================
+# STEP 13: CALCULATING THE LINEAR PREDICTOR (LP) FOR EVERY PATIENT
+#=================================================================
+year1 <- year1 %>%
+  mutate(
+    noble_LP =
+      -5.013 +
+      0.192 * age_61_80 +
+      0.597 * BMI_underweight +
+      -0.210 * BMI_overweight +
+      -0.103 * BMI_obese +
+      0.251 * smoker_current +
+      0.093 * smoker_ex +
+      0.237 * eos_over400 +
+      -0.212 * rhinitis +
+      0.378 * diabetes +
+      0.243 * ihd +
+      0.192 * anx_dep +
+      0.790 * anaphylaxis +
+      0.568 * gina_notherapy +
+      0.101 * gina_step3 +
+      0.461 * gina_step4_5 +
+      0.313 * lrti_1 +
+      0.206 * lrti_2p +
+      0.551 * ocs_1 +
+      0.975 * ocs_2 +
+      1.141 * ocs_3p +
+      0.204 * paracetamol +
+      1.877 * prior_hosp,
+    noble_pred_prob = exp(noble_LP) / (1 + exp(noble_LP))
+  )
+
+cat("Row count after Step 13:", nrow(year1), "\n")
+cat("N with non-missing LP:", sum(!is.na(year1$noble_LP)), "\n")
+
+worked_example <- data.frame(
+  age_61_80 = 0, BMI_underweight = 0, BMI_overweight = 1, BMI_obese = 0,
+  smoker_current = 0, smoker_ex = 0, eos_over400 = 0,
+  rhinitis = 1, diabetes = 0, ihd = 0, anx_dep = 1, anaphylaxis = 0,
+  gina_notherapy = 0, gina_step3 = 1, gina_step4_5 = 0,
+  lrti_1 = 0, lrti_2p = 0, ocs_1 = 1, ocs_2 = 0, ocs_3p = 0,
+  paracetamol = 0, prior_hosp = 0
+)
+worked_LP <- with(worked_example,
+  -5.013 + 0.192*age_61_80 + 0.597*BMI_underweight - 0.210*BMI_overweight -
+  0.103*BMI_obese + 0.251*smoker_current + 0.093*smoker_ex +
+  0.237*eos_over400 - 0.212*rhinitis + 0.378*diabetes + 0.243*ihd +
+  0.192*anx_dep + 0.790*anaphylaxis + 0.568*gina_notherapy +
+  0.101*gina_step3 + 0.461*gina_step4_5 + 0.313*lrti_1 + 0.206*lrti_2p +
+  0.551*ocs_1 + 0.975*ocs_2 + 1.141*ocs_3p + 0.204*paracetamol +
+  1.877*prior_hosp
+)
+worked_prob <- exp(worked_LP) / (1 + exp(worked_LP))
+cat("\nWorked example LP -- expected -4.591, got:", round(worked_LP, 3), "\n")
+cat("MATCH:", round(worked_LP, 3) == -4.591, "\n")
+worked_example_match <- round(worked_LP, 3) == -4.591
+
+#====================================
+# STEP 14: SD OF THE LINEAR PREDICTOR
+#====================================
+noble_LP_sd <- sd(year1$noble_LP, na.rm = TRUE)
+noble_LP_mean <- mean(year1$noble_LP, na.rm = TRUE)
+cat("\nSD of Noble linear predictor:", noble_LP_sd, "\n")
+
+#===================================================================
+# STEP 15: pmvalsampsize -- SAMPLE SIZE ADEQUACY CHECK
+#===================================================================
+noble_samplesize <- pmvalsampsize(
+  type = "b", cstatistic = 0.71, oe = 1, cslope = 1,
+  prevalence = 0.0964248, lpnormal = c(-4.436176, 0.5769082)
+)
+print(noble_samplesize)
+
+#==============================================================
+# STEP 16: SUBSET TO COMPLETE CASES — THE TRUE ANALYSIS DATASET
+#==============================================================
+noble_complete_v2 <- year1 %>%
+  filter(!is.na(noble_LP) & !is.na(noble_outcome_v2))
+
+cat("TRUE complete-case N:", nrow(noble_complete_v2), "\n")
+
+true_prevalence <- mean(noble_complete_v2$noble_outcome_v2)
+true_LP_mean    <- mean(noble_complete_v2$noble_LP)
+true_LP_sd      <- sd(noble_complete_v2$noble_LP)
+
+noble_samplesize_true <- pmvalsampsize(
+  type = "b", cstatistic = 0.71, oe = 1, cslope = 1,
+  prevalence = true_prevalence, lpnormal = c(true_LP_mean, true_LP_sd)
+)
+print(noble_samplesize_true)
+
+true_adequacy <- nrow(noble_complete_v2) / noble_samplesize_true$sample_size
+cat("\nTRUE adequacy multiple:", round(true_adequacy, 2), "\n")
+
+#==============================================================
+# STEP 18 / 18B: PERFORMANCE MEASURES (LOGISTIC + DECILE METHODS)
+#==============================================================
+noble_roc_v2 <- roc(noble_complete_v2$noble_outcome_v2, noble_complete_v2$noble_pred_prob,
+                     ci = TRUE, ci.method = "delong")
+cat("\nC-statistic:", round(as.numeric(noble_roc_v2$auc), 3), "\n")
+
+citl_model_v2 <- glm(noble_outcome_v2 ~ offset(noble_LP),
+                      data = noble_complete_v2, family = binomial)
+citl_estimate_v2 <- coef(citl_model_v2)[1]
+citl_ci_v2 <- confint(citl_model_v2)
+
+observed_v2 <- sum(noble_complete_v2$noble_outcome_v2)
+expected_v2 <- sum(noble_complete_v2$noble_pred_prob)
+oe_ratio_v2 <- observed_v2 / expected_v2
+oe_se_log_v2 <- sqrt(1 / observed_v2)
+oe_ci_lower_v2 <- exp(log(oe_ratio_v2) - 1.96 * oe_se_log_v2)
+oe_ci_upper_v2 <- exp(log(oe_ratio_v2) + 1.96 * oe_se_log_v2)
+
+slope_model_v2 <- glm(noble_outcome_v2 ~ noble_LP,
+                       data = noble_complete_v2, family = binomial)
+slope_estimate_v2 <- coef(slope_model_v2)["noble_LP"]
+slope_ci_v2 <- confint(slope_model_v2)["noble_LP", ]
+
+noble_complete_v2 <- noble_complete_v2 %>%
+  mutate(risk_decile = ntile(noble_pred_prob, 10))
+
+decile_summary_v2 <- noble_complete_v2 %>%
+  group_by(risk_decile) %>%
+  summarise(
+    n_patients      = n(),
+    mean_pred_risk  = mean(noble_pred_prob),
+    observed_risk   = mean(noble_outcome_v2)
+  ) %>%
+  ungroup()
+print(decile_summary_v2)
+
+decile_slope_model_v2 <- lm(observed_risk ~ mean_pred_risk, data = decile_summary_v2)
+decile_slope_estimate_v2 <- coef(decile_slope_model_v2)["mean_pred_risk"]
+decile_slope_ci_v2 <- confint(decile_slope_model_v2)["mean_pred_risk", ]
+
+#===================================================================
+# STEP 19: FORMAL COMPARISON TO NOBLE'S REPORTED VALIDATION FIGURES
+#===================================================================
+comparison_table_v2 <- data.frame(
+  Measure = c("C-statistic",
+              "Calibration-in-the-large (CITL)",
+              "O/E ratio",
+              "Calibration slope (logistic method)",
+              "Calibration slope (decile method)"),
+  Noble_reported = c("0.71 [0.70-0.72]", "Not reported", "Not reported",
+                      "0.85 [0.75-0.96]", "0.85 [0.75-0.96]"),
+  This_validation = c(
+    paste0(round(as.numeric(noble_roc_v2$auc),3), " [",
+           round(noble_roc_v2$ci[1],3), "-", round(noble_roc_v2$ci[3],3), "]"),
+    paste0(round(citl_estimate_v2,3), " [",
+           round(citl_ci_v2[1],3), "-", round(citl_ci_v2[2],3), "]"),
+    paste0(round(oe_ratio_v2,3), " [",
+           round(oe_ci_lower_v2,3), "-", round(oe_ci_upper_v2,3), "]"),
+    paste0(round(slope_estimate_v2,3), " [",
+           round(slope_ci_v2[1],3), "-", round(slope_ci_v2[2],3), "]"),
+    paste0(round(decile_slope_estimate_v2,3), " [",
+           round(decile_slope_ci_v2[1],3), "-", round(decile_slope_ci_v2[2],3), "]")
+  )
+)
+print(comparison_table_v2, row.names = FALSE)
+
+#=====================================================================
+# SAVE OUTPUTS — everything needed for the write-up, in one place
+#=====================================================================
+write.csv(comparison_table_v2, file.path(output_dir, "Noble_comparison_table.csv"), row.names = FALSE)
+write.csv(decile_summary_v2, file.path(output_dir, "Noble_decile_summary.csv"), row.names = FALSE)
+
+summary_stats <- data.frame(
+  Item = c("Worked example LP matches paper (-4.591)",
+           "Full cohort N", "PWP patients (known outcome)",
+           "Complete-case analysis N (predictors + outcome)",
+           "Outcome prevalence, full cohort", "Outcome prevalence, complete-case",
+           "Sample size required (pmvalsampsize)", "Adequacy multiple",
+           "C-statistic", "CITL", "O/E ratio",
+           "Calibration slope (logistic)", "Calibration slope (decile)"),
+  Value = c(worked_example_match,
+            nrow(year1), sum(!is.na(year1$noble_outcome_v2)),
+            nrow(noble_complete_v2),
+            round(noble_prevalence, 4), round(true_prevalence, 4),
+            noble_samplesize_true$sample_size, round(true_adequacy, 2),
+            round(as.numeric(noble_roc_v2$auc), 3), round(citl_estimate_v2, 3),
+            round(oe_ratio_v2, 3), round(slope_estimate_v2, 3),
+            round(decile_slope_estimate_v2, 3))
+)
+write.csv(summary_stats, file.path(output_dir, "Noble_summary_stats.csv"), row.names = FALSE)
+
+cat("\n--- NOBLE VALIDATION COMPLETE ---\n")
+```
