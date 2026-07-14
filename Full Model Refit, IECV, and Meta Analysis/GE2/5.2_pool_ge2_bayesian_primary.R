@@ -52,6 +52,7 @@ slope_data <- list(
   hp.mu.mean = 0, hp.mu.var = 1000
 )
 
+set.seed(123)
 fit_slope <- run.jags(
   model = slope_model, data = slope_data,
   monitor = c("mu", "bsTau", "pred"), n.chains = 4,
