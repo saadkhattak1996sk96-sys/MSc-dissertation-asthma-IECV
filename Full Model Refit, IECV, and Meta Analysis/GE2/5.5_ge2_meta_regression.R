@@ -6,7 +6,7 @@ library(dplyr)
 library(metafor)
 
 year1 <- readRDS("/users/hlskhatt/outputs/year1_ge_clean.rds")
-fixed_results <- readRDS("/users/hlskhatt/outputs/ge2_all_folds_summary_FIXED.rds")
+fixed_results <- readRDS("/users/hlskhatt/outputs/ge2_all_folds_summary.rds")
 
 fold_moderators <- year1 %>%
   filter(!is.na(blakey_outcome_ge2)) %>%
