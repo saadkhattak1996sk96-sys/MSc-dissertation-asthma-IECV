@@ -3,8 +3,8 @@
 library(ggplot2)
 library(dplyr)
 
-fixed_results <- readRDS("/users/hlskhatt/outputs/ge2_all_folds_summary_FIXED.rds")
-pooled <- readRDS("/users/hlskhatt/outputs/ge2_pooled_bayesian_results_FINAL.rds")
+fixed_results <- readRDS("/users/hlskhatt/outputs/ge2_all_folds_summary.rds")
+pooled <- readRDS("/users/hlskhatt/outputs/ge2_pooled_bayesian_results.rds")
 output_dir <- "/users/hlskhatt/outputs"
 
 make_forest_plot <- function(data, pooled_est, pooled_lb, pooled_ub, title, xlab) {
