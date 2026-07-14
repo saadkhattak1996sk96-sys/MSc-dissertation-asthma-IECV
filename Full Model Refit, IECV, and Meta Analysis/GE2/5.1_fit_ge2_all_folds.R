@@ -1,10 +1,14 @@
-cat > /users/hlskhatt/fit_ge2_all_folds.R << 'ENDOFFILE'
+# GE2 IECV — full refit, all 7 v2 folds
+# m=10 multiple imputation, 200-rep bootstrap for C-stat SE and O:E
+# bmi_cat/pef_cat/eos_cat derived AFTER imputation to avoid inconsistency with imputed continuous values
+
 library(dplyr)
 library(mice)
 library(pROC)
 
 year1 <- readRDS("/users/hlskhatt/outputs/year1_ge_clean.rds")
 
+# Build train/validation split for a given held-out fold
 build_split_v2 <- function(year1, held_out_fold, outcome_col) {
   base_select <- function(df) {
     df %>% select(all_of(outcome_col), age_cat, Gender_Coded, Smoking_clean,
@@ -19,6 +23,7 @@ build_split_v2 <- function(year1, held_out_fold, outcome_col) {
   list(train_raw = train_raw, valid_raw = valid_raw)
 }
 
+# Imputation method spec — pmm for continuous, polyreg for smoking
 meth_spec <- function(df) {
   m <- make.method(df)
   m[c("BMI_clean", "ba_PF_Percent_Pred", "Eosinophil_clean")] <- "pmm"
@@ -26,6 +31,7 @@ meth_spec <- function(df) {
   m
 }
 
+# Derive categorical predictors from imputed continuous values, post-imputation
 recode_derived_cats <- function(df) {
   df$bmi_cat <- cut(df$BMI_clean, breaks = c(-Inf, 18.5, 25, 30, Inf),
                      labels = c("Underweight", "Normal", "Overweight", "Obese"))
@@ -64,13 +70,9 @@ full_results_ge2 <- data.frame()
 
 for (fold in all_folds) {
 
-  cat("\n\n=========== FOLD:", fold, "===========\n")
-  cat("Fold start:", format(Sys.time()), "\n")
-
   split_f <- build_split_v2(year1, fold, "blakey_outcome_ge2")
-  cat("Train n:", nrow(split_f$train_raw), "| Valid n:", nrow(split_f$valid_raw), "\n")
 
-  cat("--- Development model, m=10 imputations ---\n")
+  # Development model: impute, fit, pool across m=10
   imp_train <- futuremice(split_f$train_raw, m = 10, method = meth_spec(split_f$train_raw),
                            maxit = 5, seed = 123, parallelseed = 123, n.core = n_cores)
 
@@ -86,7 +88,7 @@ for (fold in all_folds) {
   names(pooled_coefs) <- pooled_summary$term
   train_intercept <- pooled_coefs["(Intercept)"]
 
-  cat("--- Validation fold, m=10 imputations ---\n")
+  # Validation fold: impute, recalibrate intercept via offset method
   imp_valid <- futuremice(split_f$valid_raw, m = 10, method = meth_spec(split_f$valid_raw),
                            maxit = 5, seed = 123, parallelseed = 123, n.core = n_cores)
 
@@ -96,12 +98,9 @@ for (fold in all_folds) {
     valid_i <- complete(imp_valid, i)
     valid_i <- recode_derived_cats(valid_i)
 
+    # Safety check: drop any residual-NA rows post-imputation rather than crash
     complete_rows <- complete.cases(valid_i[, all.vars(formula_no_outcome)])
-    if (any(!complete_rows)) {
-      cat("WARNING:", fold, "imputation", i, "-", sum(!complete_rows),
-          "rows dropped due to residual NA after imputation\n")
-      valid_i <- valid_i[complete_rows, ]
-    }
+    if (any(!complete_rows)) valid_i <- valid_i[complete_rows, ]
 
     mm <- model.matrix(formula_no_outcome, data = valid_i)
     lp_no_int_list[[i]] <- (mm %*% pooled_coefs[colnames(mm)]) - train_intercept
@@ -134,7 +133,7 @@ for (fold in all_folds) {
   slope_estimate <- slope_pooled$qbar
   slope_se <- sqrt(slope_pooled$t)
 
-  cat("--- 200-rep bootstrap: C-stat SE (Wahl, evaluated on RESAMPLED rows) + O:E (Shin/Snell, evaluated on FULL fold) ---\n")
+  # 200-rep bootstrap: C-stat SE (Wahl method, resampled rows), O:E (Shin/Snell method, full fold)
   set.seed(123)
   B <- 200
   boot_oe <- numeric(B)
@@ -162,11 +161,6 @@ for (fold in all_folds) {
   oe_mean <- mean(boot_oe)
   oe_se <- sd(boot_oe)
 
-  cat("C-statistic:", round(c_stat_median, 4), "| SE:", round(c_stat_se, 4), "\n")
-  cat("Slope:", round(slope_estimate, 4), "| SE:", round(slope_se, 4), "\n")
-  cat("O:E:", round(oe_mean, 4), "| SE:", round(oe_se, 5), "\n")
-  cat("Fold end:", format(Sys.time()), "\n")
-
   fold_result <- data.frame(
     fold = fold, n_train = nrow(split_f$train_raw), n_valid = n_fold,
     c_stat = round(c_stat_median, 4), c_stat_se = round(c_stat_se, 4),
@@ -184,9 +178,4 @@ for (fold in all_folds) {
           file.path(results_dir, paste0("ge2_", fold, "_result.rds")))
 
   saveRDS(full_results_ge2, "/users/hlskhatt/outputs/ge2_all_folds_summary.rds")
-  print(full_results_ge2)
 }
-
-cat("\n\n=========== ALL 7 FOLDS COMPLETE ===========\n")
-print(full_results_ge2, row.names = FALSE)
-ENDOFFILE
