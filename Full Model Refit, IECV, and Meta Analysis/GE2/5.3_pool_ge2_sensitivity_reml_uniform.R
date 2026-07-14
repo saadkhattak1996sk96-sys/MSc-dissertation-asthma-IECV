@@ -32,6 +32,7 @@ model {
 
 cstat_data_unif <- list(k = nrow(fixed_results), theta = logit_cstat, theta.se = logit_cstat_se,
                          tau.max = 2, hp.mu.mean = 0, hp.mu.var = 1000)
+set.seed(123)
 fit_cstat_unif <- run.jags(model = generic_model, data = cstat_data_unif, monitor = c("mu", "bsTau", "pred"),
                             n.chains = 4, adapt = 1000, burnin = 4000, sample = 10000, method = "rjags")
 cstat_unif_summary <- summary(fit_cstat_unif)
@@ -39,12 +40,14 @@ pooled_cstat_unif <- plogis(cstat_unif_summary["mu","Median"])
 
 slope_data_unif <- list(k = nrow(fixed_results), theta = fixed_results$slope, theta.se = fixed_results$slope_se,
                          tau.max = 2, hp.mu.mean = 0, hp.mu.var = 1000)
+set.seed(123)
 fit_slope_unif <- run.jags(model = generic_model, data = slope_data_unif, monitor = c("mu", "bsTau", "pred"),
                             n.chains = 4, adapt = 1000, burnin = 4000, sample = 10000, method = "rjags")
 slope_unif_summary <- summary(fit_slope_unif)
 
 oe_data_unif <- list(k = nrow(fixed_results), theta = log_oe, theta.se = log_oe_se,
                       tau.max = 2, hp.mu.mean = 0, hp.mu.var = 1000)
+set.seed(123)
 fit_oe_unif <- run.jags(model = generic_model, data = oe_data_unif, monitor = c("mu", "bsTau", "pred"),
                          n.chains = 4, adapt = 1000, burnin = 4000, sample = 10000, method = "rjags")
 oe_unif_summary <- summary(fit_oe_unif)
