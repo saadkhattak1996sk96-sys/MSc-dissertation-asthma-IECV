@@ -1,11 +1,8 @@
-# Sensitivity comparison: REML vs Uniform(0,2) prior vs half-Student-t primary
-
 library(metafor)
 library(runjags)
 
-fixed_results <- readRDS("/users/hlskhatt/outputs/ge2_all_folds_summary.rds")
+fixed_results <- readRDS("/users/hlskhatt/outputs/ge2_v3_all_folds_summary.rds")
 
-# REML
 logit_cstat <- qlogis(fixed_results$c_stat)
 logit_cstat_se <- fixed_results$c_stat_se / (fixed_results$c_stat * (1 - fixed_results$c_stat))
 reml_cstat <- rma(yi = logit_cstat, sei = logit_cstat_se, method = "REML")
@@ -18,7 +15,6 @@ log_oe_se <- fixed_results$oe_se / fixed_results$oe_mean
 reml_oe <- rma(yi = log_oe, sei = log_oe_se, method = "REML")
 pooled_oe_reml <- exp(reml_oe$b[1])
 
-# Uniform(0,2) prior — generic JAGS model reused across measures
 generic_model <- "
 model {
   for (i in 1:k) {
@@ -54,8 +50,7 @@ fit_oe_unif <- run.jags(model = generic_model, data = oe_data_unif, monitor = c(
 oe_unif_summary <- summary(fit_oe_unif)
 pooled_oe_unif <- exp(oe_unif_summary["mu","Median"])
 
-# Three-way comparison against primary (half-Student-t) result
-primary <- readRDS("/users/hlskhatt/outputs/ge2_pooled_bayesian_results.rds")$final_summary
+primary <- readRDS("/users/hlskhatt/outputs/ge2_v3_pooled_bayesian_results.rds")$final_summary
 comparison <- data.frame(
   measure = c("C-statistic", "Calibration slope", "O:E ratio (exploratory)"),
   half_student_t_primary = primary$pooled_estimate,
@@ -66,4 +61,5 @@ comparison <- data.frame(
   tau2_reml = c(round(reml_cstat$tau2, 5), round(reml_slope$tau2, 5), round(reml_oe$tau2, 5))
 )
 
-saveRDS(comparison, "/users/hlskhatt/outputs/ge2_sensitivity_comparison.rds")
+saveRDS(comparison, "/users/hlskhatt/outputs/ge2_v3_sensitivity_comparison.rds")
+print(comparison)
