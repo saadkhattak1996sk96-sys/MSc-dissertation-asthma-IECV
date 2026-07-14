@@ -3,7 +3,7 @@
 library(metafor)
 library(runjags)
 
-fixed_results <- readRDS("/users/hlskhatt/outputs/ge2_all_folds_summary_FIXED.rds")
+fixed_results <- readRDS("/users/hlskhatt/outputs/ge2_all_folds_summary.rds")
 
 # REML
 logit_cstat <- qlogis(fixed_results$c_stat)
@@ -55,7 +55,7 @@ oe_unif_summary <- summary(fit_oe_unif)
 pooled_oe_unif <- exp(oe_unif_summary["mu","Median"])
 
 # Three-way comparison against primary (half-Student-t) result
-primary <- readRDS("/users/hlskhatt/outputs/ge2_pooled_bayesian_results_FINAL.rds")$final_summary
+primary <- readRDS("/users/hlskhatt/outputs/ge2_pooled_bayesian_results.rds")$final_summary
 comparison <- data.frame(
   measure = c("C-statistic", "Calibration slope", "O:E ratio (exploratory)"),
   half_student_t_primary = primary$pooled_estimate,
