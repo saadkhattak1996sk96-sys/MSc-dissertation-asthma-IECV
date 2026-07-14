@@ -4,7 +4,7 @@
 library(metamisc)
 library(runjags)
 
-fixed_results <- readRDS("/users/hlskhatt/outputs/ge2_all_folds_summary_FIXED.rds")
+fixed_results <- readRDS("/users/hlskhatt/outputs/ge2_all_folds_summary.rds")
 
 fit_cstat <- valmeta(
   cstat    = fixed_results$c_stat,
@@ -20,8 +20,7 @@ safe_tau2 <- function(fit) {
   val <- tryCatch(fit$tau2, error = function(e) NA)
   val <- suppressWarnings(as.numeric(val))
   if (length(val) != 1 || is.na(val)) {
-    val <- suppressWarnings(as.numeric(fit$tau))
-    if (length(val) == 1 && !is.na(val)) val <- val^2 else val <- NA
+    val <- tryCatch(fit$fit$summaries["bsTau", "Median"]^2, error = function(e) NA)
   }
   val
 }
