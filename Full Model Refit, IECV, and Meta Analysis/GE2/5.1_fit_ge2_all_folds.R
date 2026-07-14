@@ -1,3 +1,4 @@
+cat > /users/hlskhatt/fit_ge2_all_folds.R << 'ENDOFFILE'
 library(dplyr)
 library(mice)
 library(pROC)
@@ -6,8 +7,8 @@ year1 <- readRDS("/users/hlskhatt/outputs/year1_ge_clean.rds")
 
 build_split_v2 <- function(year1, held_out_fold, outcome_col) {
   base_select <- function(df) {
-    df %>% select(all_of(outcome_col), age_cat, Gender_Coded, bmi_cat, Smoking_clean,
-                   pef_cat, ics_cat, Rhinitis_Dx, eos_cat,
+    df %>% select(all_of(outcome_col), age_cat, Gender_Coded, Smoking_clean,
+                   ics_cat, Rhinitis_Dx,
                    ba_Acute_OS_Courses, ba_asthma_AE, ba_all_consultations,
                    ba_SABA_Dosage, ba_LTRA_Rx, ba_LABA_Rx,
                    Eczema_Dx, GERD_Dx, NSAIDS,
@@ -23,6 +24,19 @@ meth_spec <- function(df) {
   m[c("BMI_clean", "ba_PF_Percent_Pred", "Eosinophil_clean")] <- "pmm"
   m["Smoking_clean"] <- "polyreg"
   m
+}
+
+recode_derived_cats <- function(df) {
+  df$bmi_cat <- cut(df$BMI_clean, breaks = c(-Inf, 18.5, 25, 30, Inf),
+                     labels = c("Underweight", "Normal", "Overweight", "Obese"))
+  df$bmi_cat <- relevel(df$bmi_cat, ref = "Normal")
+  df$pef_cat <- cut(df$ba_PF_Percent_Pred, breaks = c(-Inf, 60, 79, Inf),
+                     labels = c("<=60", "61-79", ">=80"))
+  df$pef_cat <- relevel(df$pef_cat, ref = ">=80")
+  df$eos_cat <- cut(df$Eosinophil_clean, breaks = c(-Inf, 0.4, Inf),
+                     labels = c("<=0.4", ">0.4"))
+  df$eos_cat <- relevel(df$eos_cat, ref = "<=0.4")
+  df
 }
 
 model_formula <- as.formula(
@@ -63,6 +77,7 @@ for (fold in all_folds) {
   fits <- list()
   for (i in 1:imp_train$m) {
     train_i <- complete(imp_train, i)
+    train_i <- recode_derived_cats(train_i)
     fits[[i]] <- glm(model_formula, data = train_i, family = binomial)
   }
   pooled <- pool(as.mira(fits))
@@ -79,6 +94,15 @@ for (fold in all_folds) {
   actual_list <- list()
   for (i in 1:imp_valid$m) {
     valid_i <- complete(imp_valid, i)
+    valid_i <- recode_derived_cats(valid_i)
+
+    complete_rows <- complete.cases(valid_i[, all.vars(formula_no_outcome)])
+    if (any(!complete_rows)) {
+      cat("WARNING:", fold, "imputation", i, "-", sum(!complete_rows),
+          "rows dropped due to residual NA after imputation\n")
+      valid_i <- valid_i[complete_rows, ]
+    }
+
     mm <- model.matrix(formula_no_outcome, data = valid_i)
     lp_no_int_list[[i]] <- (mm %*% pooled_coefs[colnames(mm)]) - train_intercept
     actual_list[[i]] <- valid_i$blakey_outcome_ge2
@@ -165,3 +189,4 @@ for (fold in all_folds) {
 
 cat("\n\n=========== ALL 7 FOLDS COMPLETE ===========\n")
 print(full_results_ge2, row.names = FALSE)
+ENDOFFILE
