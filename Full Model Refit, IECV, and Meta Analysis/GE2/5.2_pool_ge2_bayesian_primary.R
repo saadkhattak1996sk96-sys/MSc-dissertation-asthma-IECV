@@ -52,14 +52,9 @@ slope_data <- list(
   hp.mu.mean = 0, hp.mu.var = 1000
 )
 
-my_inits <- function(chain) {
-  list(.RNG.name = "base::Wichmann-Hill", .RNG.seed = chain)
-}
-
 fit_slope <- run.jags(
   model = slope_model, data = slope_data,
   monitor = c("mu", "bsTau", "pred"), n.chains = 4,
-  inits = my_inits,
   adapt = 1000, burnin = 4000, sample = 10000, method = "rjags"
 )
 slope_summary <- summary(fit_slope)
