@@ -1,10 +1,7 @@
-# Bayesian random-effects pooling — primary method (half-Student-t prior)
-# C-stat: logit transform | Calibration slope: untransformed | O:E: log transform, exploratory only
-
 library(metamisc)
 library(runjags)
 
-fixed_results <- readRDS("/users/hlskhatt/outputs/ge2_all_folds_summary.rds")
+fixed_results <- readRDS("/users/hlskhatt/outputs/ge2_v3_all_folds_summary.rds")
 
 fit_cstat <- valmeta(
   cstat    = fixed_results$c_stat,
@@ -15,17 +12,22 @@ fit_cstat <- valmeta(
   verbose  = FALSE
 )
 
-# Robust tau2 extraction — metamisc's return structure varies by measure type
 safe_tau2 <- function(fit) {
   val <- tryCatch(fit$tau2, error = function(e) NA)
   val <- suppressWarnings(as.numeric(val))
-  if (length(val) != 1 || is.na(val)) {
-    val <- tryCatch(fit$fit$summaries["bsTau", "Median"]^2, error = function(e) NA)
-  }
-  val
+  if (length(val) == 1 && !is.na(val)) return(val)
+
+  val <- tryCatch(fit$tau, error = function(e) NA)
+  val <- suppressWarnings(as.numeric(val))
+  if (length(val) == 1 && !is.na(val)) return(val^2)
+
+  val <- tryCatch(fit$fit$summaries["bsTau", "Median"], error = function(e) NA)
+  val <- suppressWarnings(as.numeric(val))
+  if (length(val) == 1 && !is.na(val)) return(val^2)
+
+  NA
 }
 
-# Calibration slope pooled via hand-built JAGS model (metamisc has no native slope pooling)
 slope_model <- "
 model {
   for (i in 1:k) {
@@ -57,7 +59,6 @@ fit_slope <- run.jags(
 )
 slope_summary <- summary(fit_slope)
 
-# O:E pooled as exploratory only, per project decision — wider prior (sigma=1.5)
 fit_oe <- valmeta(
   measure = "OE",
   OE      = fixed_results$oe_mean,
@@ -80,4 +81,6 @@ final_summary <- data.frame(
 
 saveRDS(list(fit_cstat = fit_cstat, fit_slope = fit_slope, slope_summary = slope_summary,
              fit_oe = fit_oe, final_summary = final_summary),
-        "/users/hlskhatt/outputs/ge2_pooled_bayesian_results.rds")
+        "/users/hlskhatt/outputs/ge2_v3_pooled_bayesian_results.rds")
+
+print(final_summary)
