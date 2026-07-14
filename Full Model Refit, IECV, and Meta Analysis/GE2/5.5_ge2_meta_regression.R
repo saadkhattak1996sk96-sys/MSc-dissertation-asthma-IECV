@@ -1,19 +1,15 @@
-# Meta-regression: event rate and mean age as fold-level moderators
-# CAUTION: K=7 folds — Debray et al. 2019's own worked example needed K=21 to detect
-# a genuine moderator. A null or "significant" result here should be read with that in mind.
-
 library(dplyr)
 library(metafor)
 
-year1 <- readRDS("/users/hlskhatt/outputs/year1_ge_clean.rds")
-fixed_results <- readRDS("/users/hlskhatt/outputs/ge2_all_folds_summary.rds")
+year1 <- readRDS("/users/hlskhatt/outputs/year1_ge_clean_v3.rds")
+fixed_results <- readRDS("/users/hlskhatt/outputs/ge2_v3_all_folds_summary.rds")
 
 fold_moderators <- year1 %>%
   filter(!is.na(blakey_outcome_ge2)) %>%
-  group_by(iecv_fold_v2) %>%
+  group_by(iecv_fold_v3) %>%
   summarise(event_rate = mean(blakey_outcome_ge2, na.rm = TRUE),
             mean_age = mean(age, na.rm = TRUE)) %>%
-  rename(fold = iecv_fold_v2)
+  rename(fold = iecv_fold_v3)
 
 merged <- merge(fixed_results, fold_moderators, by = "fold")
 
@@ -43,5 +39,7 @@ summary_table <- data.frame(
                      fit_cstat_age$R2, fit_slope_age$R2, fit_oe_age$R2)
 )
 
+print(summary_table)
+
 saveRDS(list(fold_moderators = fold_moderators, summary_table = summary_table),
-        "/users/hlskhatt/outputs/ge2_meta_regression_results.rds")
+        "/users/hlskhatt/outputs/ge2_v3_meta_regression_results.rds")
