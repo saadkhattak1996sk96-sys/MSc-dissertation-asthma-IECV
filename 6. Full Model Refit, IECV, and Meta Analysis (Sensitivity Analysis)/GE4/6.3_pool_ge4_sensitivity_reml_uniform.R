@@ -4,8 +4,8 @@
 # (half-Student-t vs uniform) or estimator (Bayesian vs REML)?
 #
 # NOTE: uniform-prior models use tau.max = 2, vs tau.max = 10 in the
-# primary half-Student-t model — an unresolved inconsistency carried over
-# from the GE2 script, not fixed here, flagged as a known limitation.
+# primary half-Student-t model -- a known, deliberate difference,
+# consistent across GE2 and GE4.
 # =====================================================================
 
 library(metafor)
