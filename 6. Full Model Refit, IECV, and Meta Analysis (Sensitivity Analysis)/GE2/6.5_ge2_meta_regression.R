@@ -1,3 +1,18 @@
+# =============================================================================
+# GE2 FULL MODEL REFIT — META-REGRESSION
+# =============================================================================
+# Purpose:
+#   Explores whether fold-level heterogeneity in discrimination or
+#   calibration is associated with two candidate fold-level moderators:
+#   event rate and mean patient age. Exploratory only — with 7 folds this
+#   analysis is underpowered relative to standard meta-regression guidance.
+#
+# Note:
+#   Each of the six regressions (2 moderators x 3 outcome measures) is
+#   wrapped so that a failed fit is reported explicitly (via a `converged`
+#   flag and NA values) rather than silently dropped from the results table.
+# =============================================================================
+
 library(dplyr)
 library(metafor)
 
@@ -11,7 +26,8 @@ fold_moderators <- year1 %>%
             mean_age = mean(age, na.rm = TRUE)) %>%
   rename(fold = iecv_fold_v3)
 
-merged <- merge(fixed_results, fold_moderators, by = "fold")
+merged <- merge(fixed_results, fold_moderators, by = "fold", sort = FALSE)
+merged <- merged[match(fixed_results$fold, merged$fold), ]
 
 logit_cstat <- qlogis(merged$c_stat)
 logit_cstat_se <- merged$c_stat_se / (merged$c_stat * (1 - merged$c_stat))
@@ -23,6 +39,20 @@ run_metareg <- function(yi, sei, moderator) {
            error = function(e) NULL)
 }
 
+get_pval <- function(fit) {
+  if (is.null(fit)) return(NA)
+  tryCatch(fit$pval[2], error = function(e) NA)
+}
+
+get_r2 <- function(fit) {
+  if (is.null(fit)) return(NA)
+  tryCatch(fit$R2, error = function(e) NA)
+}
+
+get_converged <- function(fit) {
+  !is.null(fit)
+}
+
 fit_cstat_event <- run_metareg(logit_cstat, logit_cstat_se, merged$event_rate)
 fit_slope_event <- run_metareg(merged$slope, merged$slope_se, merged$event_rate)
 fit_oe_event <- run_metareg(log_oe, log_oe_se, merged$event_rate)
@@ -30,16 +60,16 @@ fit_cstat_age <- run_metareg(logit_cstat, logit_cstat_se, merged$mean_age)
 fit_slope_age <- run_metareg(merged$slope, merged$slope_se, merged$mean_age)
 fit_oe_age <- run_metareg(log_oe, log_oe_se, merged$mean_age)
 
+all_fits <- list(fit_cstat_event, fit_slope_event, fit_oe_event,
+                  fit_cstat_age, fit_slope_age, fit_oe_age)
+
 summary_table <- data.frame(
   outcome = rep(c("C-statistic", "Calibration slope", "O:E"), 2),
   moderator = c(rep("event_rate", 3), rep("mean_age", 3)),
-  p_value = c(fit_cstat_event$pval[2], fit_slope_event$pval[2], fit_oe_event$pval[2],
-              fit_cstat_age$pval[2], fit_slope_age$pval[2], fit_oe_age$pval[2]),
-  r_squared_pct = c(fit_cstat_event$R2, fit_slope_event$R2, fit_oe_event$R2,
-                     fit_cstat_age$R2, fit_slope_age$R2, fit_oe_age$R2)
+  p_value = sapply(all_fits, get_pval),
+  r_squared_pct = sapply(all_fits, get_r2),
+  converged = sapply(all_fits, get_converged)
 )
 
-print(summary_table)
-
 saveRDS(list(fold_moderators = fold_moderators, summary_table = summary_table),
-        "/users/hlskhatt/outputs/ge2_v3_meta_regression_results.rds")
+        "/users/hlskhatt/outputs/ge2_v3_full_refit_meta_regression_results.rds")
