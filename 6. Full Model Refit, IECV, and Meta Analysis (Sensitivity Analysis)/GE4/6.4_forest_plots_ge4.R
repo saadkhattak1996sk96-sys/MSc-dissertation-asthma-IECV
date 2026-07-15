@@ -2,9 +2,10 @@
 # forest_plots_ge4.R
 # Forest plots for C-statistic, calibration slope, and O:E ratio.
 #
-# NOTE: per-fold CIs for C-stat and O:E are computed on the logit/log
-# scale and back-transformed, matching the scale actually used for
-# cross-fold pooling.
+# Per-fold CIs for C-statistic and O:E are computed on the logit/log
+# scale and back-transformed, consistent with the scale actually used
+# for cross-fold pooling. Calibration slope's CI is left untransformed
+# by design, consistent with its pooling method.
 # =====================================================================
 
 library(ggplot2)
