@@ -1,3 +1,21 @@
+# =============================================================================
+# GE2 FULL MODEL REFIT — PRIMARY POOLING (BAYESIAN RANDOM-EFFECTS)
+# =============================================================================
+# Purpose:
+#   Pools the 7 fold-level estimates (C-statistic, calibration slope, O:E)
+#   from the full-refit sensitivity analysis into a single overall estimate,
+#   using Bayesian random-effects meta-analysis with a half-Student-t prior
+#   on the between-fold heterogeneity — the same primary pooling method used
+#   for the Debray (primary) framework, so the two are directly comparable.
+#
+# Method:
+#   - C-statistic and O:E pooled via metamisc::valmeta() (BAYES method)
+#   - Calibration slope pooled via a hand-built runjags hierarchical model,
+#     since valmeta() does not support this measure
+#   - Convergence (psrf/Gelman-Rubin statistic) is checked and printed
+#     explicitly for all three measures rather than assumed
+# =============================================================================
+
 library(metamisc)
 library(runjags)
 
@@ -12,6 +30,9 @@ fit_cstat <- valmeta(
   verbose  = FALSE
 )
 
+# Extracts tau2 (heterogeneity) from a valmeta object, whose internal
+# structure differs between measures (top-level field for C-statistic,
+# nested inside $fit$summaries for O:E).
 safe_tau2 <- function(fit) {
   val <- tryCatch(fit$tau2, error = function(e) NA)
   val <- suppressWarnings(as.numeric(val))
@@ -26,6 +47,18 @@ safe_tau2 <- function(fit) {
   if (length(val) == 1 && !is.na(val)) return(val^2)
 
   NA
+}
+
+# Extracts and reports the Gelman-Rubin convergence statistic (psrf) from a
+# valmeta object's underlying runjags fit.
+report_convergence <- function(fit, label) {
+  cat(sprintf("\n[%s] Convergence (psrf, target < 1.05):\n", label))
+  psrf_table <- tryCatch(fit$fit$summaries[, "psrf", drop = FALSE], error = function(e) NULL)
+  if (!is.null(psrf_table)) {
+    print(psrf_table)
+  } else {
+    cat(sprintf("[%s] Could not extract psrf automatically — requires manual inspection before this estimate is treated as final.\n", label))
+  }
 }
 
 slope_model <- "
@@ -59,6 +92,9 @@ fit_slope <- run.jags(
 )
 slope_summary <- summary(fit_slope)
 
+cat("\n[Calibration slope] Convergence (psrf, target < 1.05):\n")
+print(slope_summary[, "psrf", drop = FALSE])
+
 fit_oe <- valmeta(
   measure = "OE",
   OE      = fixed_results$oe_mean,
@@ -68,6 +104,9 @@ fit_oe <- valmeta(
   pars    = list(hp.tau.dist = "dhalft", hp.tau.sigma = 1.5, hp.tau.df = 3, hp.tau.max = 10),
   verbose = FALSE
 )
+
+report_convergence(fit_cstat, "C-statistic")
+report_convergence(fit_oe, "O:E")
 
 oe_tau2 <- safe_tau2(fit_oe)
 
@@ -81,6 +120,4 @@ final_summary <- data.frame(
 
 saveRDS(list(fit_cstat = fit_cstat, fit_slope = fit_slope, slope_summary = slope_summary,
              fit_oe = fit_oe, final_summary = final_summary),
-        "/users/hlskhatt/outputs/ge2_v3_pooled_bayesian_results.rds")
-
-print(final_summary)
+        "/users/hlskhatt/outputs/ge2_v3_full_refit_pooled_results.rds")
