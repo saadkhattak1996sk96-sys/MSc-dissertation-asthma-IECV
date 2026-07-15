@@ -1,3 +1,12 @@
+# =============================================================================
+# GE2 FULL MODEL REFIT — SENSITIVITY COMPARISON (PRIOR/METHOD CHOICE)
+# =============================================================================
+# Purpose:
+#   Tests whether the pooled result depends on which meta-analytic method
+#   combines the 7 folds, by comparing the primary half-Student-t prior
+#   against a Uniform prior and against traditional REML estimation.
+# =============================================================================
+
 library(metafor)
 library(runjags)
 
@@ -53,7 +62,7 @@ fit_oe_unif <- run.jags(model = generic_model, data = oe_data_unif, monitor = c(
 oe_unif_summary <- summary(fit_oe_unif)
 pooled_oe_unif <- exp(oe_unif_summary["mu","Median"])
 
-primary <- readRDS("/users/hlskhatt/outputs/ge2_v3_pooled_bayesian_results.rds")$final_summary
+primary <- readRDS("/users/hlskhatt/outputs/ge2_v3_full_refit_pooled_results.rds")$final_summary
 comparison <- data.frame(
   measure = c("C-statistic", "Calibration slope", "O:E ratio (exploratory)"),
   half_student_t_primary = primary$pooled_estimate,
@@ -64,5 +73,4 @@ comparison <- data.frame(
   tau2_reml = c(round(reml_cstat$tau2, 5), round(reml_slope$tau2, 5), round(reml_oe$tau2, 5))
 )
 
-saveRDS(comparison, "/users/hlskhatt/outputs/ge2_v3_sensitivity_comparison.rds")
-print(comparison)
+saveRDS(comparison, "/users/hlskhatt/outputs/ge2_v3_full_refit_sensitivity_comparison.rds")
