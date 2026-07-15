@@ -1,9 +1,14 @@
 # =====================================================================
 # fit_ge4_all_folds.R
-# GE4 (>=4 exacerbations) full-refit IECV pipeline, v3 fold structure
-# Mirrors fit_ge2_all_folds.R exactly, with the outcome swapped to
-# blakey_outcome_ge4 and Eczema_Dx/GERD_Dx/NSAIDS dropped, since Blakey's
-# own GE4 model excludes these three predictors by his stepwise selection.
+# GE4 (>=4 exacerbations) full-refit IECV pipeline, v3 fold structure.
+# Mirrors fit_ge2_all_folds.R, with the outcome swapped to
+# blakey_outcome_ge4 and Eczema_Dx/GERD_Dx/NSAIDS dropped, since
+# Blakey's own GE4 model excludes these three predictors by his
+# stepwise selection.
+#
+# Imputation uses single-core mice() with an explicit post-imputation
+# diversity check (halts the script if any two imputed copies are
+# found identical), applied to every fold, train and validation.
 # =====================================================================
 
 library(dplyr)
@@ -35,10 +40,30 @@ meth_spec <- function(df) {
   m
 }
 
+# --- Diversity check: compares every pair of imputed copies for every
+#     imputed variable; halts immediately if any two copies are
+#     identical (guards against silent multi-core imputation defects) ---
+check_imputation_diversity <- function(imp_obj, vars_to_check, label) {
+  m <- imp_obj$m
+  completed_list <- lapply(1:m, function(i) complete(imp_obj, i)[, vars_to_check, drop = FALSE])
+  min_diff <- Inf
+  for (a in 1:(m - 1)) {
+    for (b in (a + 1):m) {
+      n_diff <- sum(completed_list[[a]] != completed_list[[b]], na.rm = TRUE)
+      if (n_diff < min_diff) min_diff <- n_diff
+      if (n_diff == 0) {
+        stop(paste0("Diversity check failed (", label, "): imputed copies ", a,
+                     " and ", b, " are identical."))
+      }
+    }
+  }
+  cat("Diversity check passed (", label, "): smallest pairwise difference = ",
+      min_diff, " cells\n", sep = "")
+}
+
 # --- Derive categorical predictors from imputed continuous variables,
 #     applied AFTER imputation so bmi_cat/pef_cat/eos_cat never carry
-#     independent missingness of their own (fixes the GE2 imputation-
-#     consistency bug found during QA — same fix applied here from the start) ---
+#     independent missingness of their own ---
 recode_derived_cats <- function(df) {
   df$bmi_cat <- cut(df$BMI_clean, breaks = c(-Inf, 18.5, 25, 30, Inf),
                      labels = c("Underweight", "Normal", "Overweight", "Obese"))
@@ -53,7 +78,7 @@ recode_derived_cats <- function(df) {
 }
 
 # --- GE4 model formula: identical predictor set to GE2, minus
-#     Eczema_Dx/GERD_Dx/NSAIDS (Blakey's GE4 stepwise selection excludes these) ---
+#     Eczema_Dx/GERD_Dx/NSAIDS ---
 model_formula_ge4 <- as.formula(
   "blakey_outcome_ge4 ~ age_cat + Gender_Coded + bmi_cat + Smoking_clean +
    pef_cat + ics_cat + Rhinitis_Dx + eos_cat +
@@ -69,7 +94,8 @@ formula_no_outcome_ge4 <- ~ age_cat + Gender_Coded + bmi_cat + Smoking_clean +
 all_folds <- c("Fold1_2005_Apr2008", "Fold2_May08_Mar09", "Fold3_Apr09_Aug10",
                "Fold4_Sep10_Aug11", "Fold5_Sep11_Dec11", "Fold6_2012", "Fold7_2013")
 
-n_cores <- min(10, parallel::detectCores())
+imputed_vars <- c("BMI_clean", "ba_PF_Percent_Pred", "Eosinophil_clean", "Smoking_clean")
+
 results_dir <- "/users/hlskhatt/outputs/ge4_v3_fold_results"
 if (!dir.exists(results_dir)) dir.create(results_dir, recursive = TRUE)
 
@@ -79,10 +105,11 @@ for (fold in all_folds) {
 
   split_f <- build_split_v3_ge4(year1, fold, "blakey_outcome_ge4")
 
-  # --- Impute training data (m=10), fit GE4 model on each copy, pool
-  #     coefficients via Rubin's rules ---
-  imp_train <- futuremice(split_f$train_raw, m = 10, method = meth_spec(split_f$train_raw),
-                           maxit = 5, seed = 123, parallelseed = 123, n.core = n_cores)
+  # --- Impute training data (m=10), single-core mice(), fit GE4 model
+  #     on each copy, pool coefficients via Rubin's rules ---
+  imp_train <- mice(split_f$train_raw, m = 10, method = meth_spec(split_f$train_raw),
+                     maxit = 5, seed = 123, printFlag = FALSE)
+  check_imputation_diversity(imp_train, imputed_vars, paste0(fold, " - training"))
 
   fits <- list()
   for (i in 1:imp_train$m) {
@@ -96,9 +123,10 @@ for (fold in all_folds) {
   names(pooled_coefs) <- pooled_summary$term
   train_intercept <- pooled_coefs["(Intercept)"]
 
-  # --- Impute validation (held-out) data separately, m=10 ---
-  imp_valid <- futuremice(split_f$valid_raw, m = 10, method = meth_spec(split_f$valid_raw),
-                           maxit = 5, seed = 123, parallelseed = 123, n.core = n_cores)
+  # --- Impute validation (held-out) data separately, m=10, single-core ---
+  imp_valid <- mice(split_f$valid_raw, m = 10, method = meth_spec(split_f$valid_raw),
+                     maxit = 5, seed = 123, printFlag = FALSE)
+  check_imputation_diversity(imp_valid, imputed_vars, paste0(fold, " - validation"))
 
   # --- Linear predictor with intercept stripped out, per imputed copy ---
   lp_no_int_list <- list()
@@ -118,9 +146,7 @@ for (fold in all_folds) {
   n_fold <- length(actual_list[[1]])
   actual_outcome <- actual_list[[1]]
 
-  # --- Mandatory per-fold intercept recalibration (fixes the "no
-  #     recalibration" bug found in the GE2 build — applied correctly here
-  #     from the start) ---
+  # --- Mandatory per-fold intercept recalibration ---
   new_int_fits <- list()
   for (i in 1:imp_valid$m) {
     new_int_fits[[i]] <- glm(actual_list[[i]] ~ offset(lp_no_int_list[[i]]), family = binomial)
@@ -149,7 +175,7 @@ for (fold in all_folds) {
 
   # --- Bootstrap (200 reps): C-stat SE via resample-and-evaluate;
   #     O:E via Steyerberg & Harrell method (recalibrate on resample,
-  #     evaluate on the ORIGINAL full fold) ---
+  #     evaluate on the original full fold) ---
   set.seed(123)
   B <- 200
   boot_oe <- numeric(B)
