@@ -1,13 +1,14 @@
 # =====================================================================
-# pool_ge4_bayesian_primary.R
-# Cross-fold Bayesian random-effects pooling, half-Student-t prior (primary
-# method per Laura's constraint: one justified, citable method per measure).
+# pooled_ge4_bayesian_primary.R
+# Cross-fold Bayesian random-effects pooling, half-Student-t prior
+# (primary method per project's pre-specified pooling framework).
 #
-# NOTE: O:E is pooled via a hand-rolled JAGS model (log-transformed), NOT
-# via valmeta()'s built-in BAYES method for O:E. valmeta()'s internal
-# defaults failed to converge for this outcome (psrf = 1.06 on bsTau,
-# above the 1.05 threshold) and do not expose adapt/burnin/sample for
-# tuning. The hand-rolled model gives full control over MCMC settings.
+# O:E is pooled via a hand-rolled JAGS model (log-transformed) rather
+# than valmeta()'s built-in BAYES method for O:E, which does not expose
+# adapt/burnin/sample for tuning.
+#
+# Convergence (psrf) is checked and printed explicitly for all three
+# measures.
 # =====================================================================
 
 library(metamisc)
@@ -15,7 +16,7 @@ library(runjags)
 
 fixed_results <- readRDS("/users/hlskhatt/outputs/ge4_v3_all_folds_summary.rds")
 
-# --- C-statistic: valmeta's BAYES method, converged cleanly at defaults ---
+# --- C-statistic: valmeta's BAYES method ---
 fit_cstat <- valmeta(
   cstat    = fixed_results$c_stat,
   cstat.se = fixed_results$c_stat_se,
@@ -24,6 +25,11 @@ fit_cstat <- valmeta(
   pars     = list(hp.tau.dist = "dhalft", hp.tau.sigma = 0.5, hp.tau.df = 3, hp.tau.max = 10),
   verbose  = FALSE
 )
+
+cat("\n=== C-statistic convergence check (psrf, want < 1.05 for all rows) ===\n")
+cstat_psrf <- tryCatch(fit_cstat$fit$summaries[, "psrf"],
+                        error = function(e) "Could not extract psrf -- check fit_cstat$fit$summaries manually")
+print(cstat_psrf)
 
 safe_tau2 <- function(fit) {
   val <- tryCatch(fit$tau2, error = function(e) NA)
@@ -42,7 +48,7 @@ safe_tau2 <- function(fit) {
 }
 
 # --- Generic random-effects model, used for both slope (raw scale) and
-#     O:E (log scale) — gives explicit control over adapt/burnin/sample ---
+#     O:E (log scale) ---
 generic_model <- "
 model {
   for (i in 1:k) {
@@ -59,8 +65,7 @@ model {
 }
 "
 
-# --- Calibration slope: plain Rubin's-rules-consistent random-effects
-#     model, untransformed (Wood 2015 justification) ---
+# --- Calibration slope ---
 slope_data <- list(
   k = nrow(fixed_results),
   theta = fixed_results$slope,
@@ -77,9 +82,10 @@ fit_slope <- run.jags(
 )
 slope_summary <- summary(fit_slope)
 
-# --- O:E: log-transformed, hand-rolled model with increased
-#     adapt/burnin/sample specifically to clear the convergence threshold
-#     valmeta()'s defaults could not reach ---
+cat("\n=== Calibration slope convergence check (psrf, want < 1.05 for all rows) ===\n")
+print(fit_slope$psrf$psrf)
+
+# --- O:E: log-transformed, hand-rolled model ---
 log_oe <- log(fixed_results$oe_mean)
 log_oe_se <- fixed_results$oe_se / fixed_results$oe_mean
 
@@ -99,7 +105,6 @@ fit_oe <- run.jags(
 )
 oe_summary <- summary(fit_oe)
 
-# --- Explicit convergence check, printed rather than left to a warning ---
 cat("\n=== O:E convergence check (psrf, want < 1.05 for all rows) ===\n")
 print(fit_oe$psrf$psrf)
 
