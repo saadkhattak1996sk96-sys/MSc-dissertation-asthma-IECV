@@ -3,10 +3,10 @@
 # Meta-regression: does fold-level event rate or mean age explain
 # variation in C-statistic, calibration slope, or O:E across folds?
 #
-# NOTE: K=7 folds — this analysis is underpowered relative to Debray's
-# own K=21 benchmark for this kind of test. Six tests run here (3
-# measures x 2 moderators) with no multiple-comparison correction —
-# treat any "significant" result with appropriate caution in write-up.
+# NOTE: K=7 folds -- underpowered relative to Debray's own K=21
+# benchmark for this kind of test. Six tests run here (3 measures x 2
+# moderators) with no multiple-comparison correction -- treat any
+# "significant" result with appropriate caution in write-up.
 # =====================================================================
 
 library(dplyr)
@@ -45,7 +45,7 @@ fit_slope_age <- run_metareg(merged$slope, merged$slope_se, merged$mean_age)
 fit_oe_age <- run_metareg(log_oe, log_oe_se, merged$mean_age)
 
 # --- Defensive helpers: return NA + flag rather than crashing if any
-#     rma() call failed (returns NULL from the tryCatch above) ---
+#     rma() call failed ---
 get_pval <- function(fit) if (is.null(fit)) NA else fit$pval[2]
 get_r2 <- function(fit) if (is.null(fit)) NA else fit$R2
 
