@@ -1,6 +1,6 @@
 # MSc Dissertation — Asthma Exacerbation Prediction Models: External Validation and IECV
 
-**Student:** Saad Ishaq Khattak (dentist by background)
+**Student:** Saad Ishaq Khattak 
 **Degree:** MSc Health Data Science, University of Liverpool
 **Primary Supervisor:** Dr Laura Bonnett
 **Co-Supervisor:** Mr Thomas Spain
